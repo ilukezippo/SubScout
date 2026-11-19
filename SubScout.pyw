@@ -25,7 +25,9 @@ import os
 import queue
 import re
 import shutil
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -61,6 +63,10 @@ APP_TAGLINE = "Movie & series subtitles · English & Arabic · multiple sources"
 APP_ID = "ilukezippo.SubScout"
 APP_VERSION = "1.0"
 DONATE_URL = "https://buymeacoffee.com/ilukezippo"
+AUTHOR = "ilukezippo"
+GITHUB_REPO = "ilukezippo/SubScout"
+GITHUB_URL = f"https://github.com/{GITHUB_REPO}"
+AUTHOR_URL = f"https://github.com/{AUTHOR}"
 KEYRING_SERVICE = "SubScout"
 OLD_KEYRING_SERVICE = "YIFYSubtitleDownloader"
 
@@ -112,13 +118,36 @@ def F(size: int = 10) -> tuple:
     return (FONT, size, "bold")
 
 
-C = {
-    "bg": "#0f1115", "surface": "#161a21", "card": "#1c2029", "card_hi": "#262b36", "border": "#2a303c",
-    "fg": "#e7eaf0", "muted": "#8a93a6", "faint": "#5c6475",
-    "accent": "#7c5cff", "accent_hi": "#9b85ff", "accent_dim": "#2f2766", "accent_press": "#6847f0",
-    "on_accent": "#ffffff", "on_accent_dim": "#8a82c4",
-    "ok": "#4ade80", "bad": "#f87171", "warn": "#fbbf24", "stripe": "#13161c", "select": "#2b3240",
+# Themes = an accent colour + a background. Settings → Themes; applied live.
+ACCENTS = {  # name: (accent, hover, disabled, pressed, text on accent, disabled text)
+    "Violet":     ("#7c5cff", "#9b85ff", "#2f2766", "#6847f0", "#ffffff", "#8a82c4"),
+    "Ocean Blue": ("#3b82f6", "#60a5fa", "#1c335c", "#2563eb", "#ffffff", "#7f9cc9"),
+    "Teal":       ("#14b8a6", "#2dd4bf", "#11433f", "#0d9488", "#ffffff", "#7fb8b1"),
+    "Rose":       ("#f43f5e", "#fb7185", "#5a1a29", "#e11d48", "#ffffff", "#c48a95"),
+    "Amber":      ("#f59e0b", "#fbbf24", "#5a3d12", "#d97706", "#111111", "#9a7a50"),
+    "Graphite":   ("#d4d8e0", "#eceff4", "#3a3f4a", "#b9bfca", "#111111", "#8a909c"),
 }
+BASES = {  # name: (bg, surface, card, card_hi, border, stripe, select)
+    "Midnight":   ("#0f1115", "#161a21", "#1c2029", "#262b36", "#2a303c", "#13161c", "#2b3240"),
+    "OLED Black": ("#000000", "#0a0a0b", "#121214", "#1c1c20", "#26262b", "#060607", "#24242a"),
+    "Slate":      ("#1b2130", "#222939", "#293144", "#333c52", "#3d475f", "#1f2636", "#3a4459"),
+}
+DEFAULT_ACCENT, DEFAULT_BASE = "Violet", "Midnight"
+
+C = {
+    "fg": "#e7eaf0", "muted": "#8a93a6", "faint": "#5c6475",
+    "ok": "#4ade80", "bad": "#f87171", "warn": "#fbbf24",
+}
+
+
+def set_theme(accent: str, base: str) -> None:
+    a = ACCENTS.get(accent, ACCENTS[DEFAULT_ACCENT])
+    b = BASES.get(base, BASES[DEFAULT_BASE])
+    C.update(zip(("accent", "accent_hi", "accent_dim", "accent_press", "on_accent", "on_accent_dim"), a))
+    C.update(zip(("bg", "surface", "card", "card_hi", "border", "stripe", "select"), b))
+
+
+set_theme(DEFAULT_ACCENT, DEFAULT_BASE)
 
 
 def _state_dir() -> str:
@@ -742,7 +771,7 @@ class SubdlApiProvider(Provider):
     DL = "https://dl.subdl.com"
 
     def missing_config(self):
-        return "" if self.settings.get("subdl_api_key") else "add a free SubDL API key in Sources"
+        return "" if self.settings.get("subdl_api_key") else "add a free SubDL API key in Settings → Sources"
 
     def fetch(self, m, lang_name, code):
         params = {"api_key": self.settings["subdl_api_key"], "languages": code.upper(), "subs_per_page": 30}
@@ -817,7 +846,7 @@ class OpenSubtitlesProvider(Provider):
         self.base = self.BASE
 
     def missing_config(self):
-        return "" if self.settings.get("os_api_key") else "add a free OpenSubtitles API key in Sources"
+        return "" if self.settings.get("os_api_key") else "add a free OpenSubtitles API key in Settings → Sources"
 
     def begin(self):
         self.http.headers.update({"Api-Key": self.settings.get("os_api_key", ""),
@@ -914,7 +943,7 @@ class SubSourceProvider(Provider):
         self._ids: dict[tuple, int | None] = {}
 
     def missing_config(self):
-        return "" if self.settings.get("subsource_api_key") else "add a free SubSource API key in Sources"
+        return "" if self.settings.get("subsource_api_key") else "add a free SubSource API key in Settings → Sources"
 
     def _call(self, path: str, params: dict, **kw):
         params = {**params, "api_key": self.settings["subsource_api_key"]}
@@ -1175,6 +1204,32 @@ class SubdlWebProvider(Provider):
             raise
 
 
+# ---------- updates (GitHub releases) ----------
+def parse_version(text: str) -> tuple:
+    nums = [int(n) for n in re.findall(r"\d+", text or "")[:4]]
+    return tuple(nums + [0] * (4 - len(nums)))
+
+
+def fetch_latest_release() -> dict:
+    """Latest published release of SubScout on GitHub (tag, notes, exe download URL)."""
+    r = requests.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", timeout=REQUEST_TIMEOUT,
+                     headers={"Accept": "application/vnd.github+json", "User-Agent": f"SubScout/{APP_VERSION}"})
+    r.raise_for_status()
+    data = r.json()
+    exe = next((a for a in data.get("assets") or [] if str(a.get("name", "")).lower().endswith(".exe")), None)
+    return {"tag": data.get("tag_name", ""), "name": data.get("name") or data.get("tag_name", ""),
+            "notes": data.get("body") or "", "page": data.get("html_url") or f"{GITHUB_URL}/releases/latest",
+            "exe_url": exe.get("browser_download_url") if exe else "", "exe_size": exe.get("size", 0) if exe else 0}
+
+
+def is_newer(tag: str) -> bool:
+    return parse_version(tag) > parse_version(APP_VERSION)
+
+
+def is_frozen_exe() -> bool:
+    return bool(getattr(sys, "frozen", False)) and sys.executable.lower().endswith(".exe")
+
+
 # ---------- "Test" buttons in the Sources window ----------
 def test_subdl_key(key: str) -> tuple[bool, str]:
     if not key:
@@ -1347,6 +1402,8 @@ class App(tk.Tk):
                          "subdl_api_key": "", "subsource_api_key": "", "os_api_key": "", "os_username": "",
                          "os_password": ""}
 
+        saved = read_json(APP_STATE_FILE, {})
+        set_theme(saved.get("theme_accent", DEFAULT_ACCENT), saved.get("theme_base", DEFAULT_BASE))
         self._setup_fonts()
         self._setup_styles()
         self._build_ui()
@@ -1360,6 +1417,8 @@ class App(tk.Tk):
         self._dark_title_bar(self)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        if self.settings.get("check_updates", True):
+            self.after(1500, lambda: self._check_updates(manual=False))
         self.after(40, self._drain_ui_queue)
 
     # ---------- thread-safe UI bridge ----------
@@ -1377,7 +1436,7 @@ class App(tk.Tk):
                     self._append_log("[UI ERROR] " + traceback.format_exc().strip().splitlines()[-1])
         except queue.Empty:
             pass
-        self.after(40, self._drain_ui_queue)
+        self._drain_job = self.after(40, self._drain_ui_queue)
 
     def report_callback_exception(self, exc, val, tb):
         self._append_log(f"[UI ERROR] {val}")
@@ -1467,6 +1526,9 @@ class App(tk.Tk):
         st.configure("CardMuted.TLabel", background=C["card"], foreground=C["muted"], font=F(9))
         st.configure("Surface.TLabel", background=C["surface"], foreground=C["muted"], font=F(9))
         st.configure("Section.TLabel", background=C["card"], foreground=C["muted"], font=F(8))
+        st.configure("CardTitle.TLabel", background=C["card"], foreground=C["fg"], font=F(16))
+        st.configure("Link.TLabel", background=C["card"], foreground=C["accent_hi"], font=F(10))
+        st.map("Link.TLabel", foreground=[("active", C["fg"])])
         st.configure("TestBusy.TLabel", background=C["card"], foreground=C["muted"], font=F(9))
         st.configure("TestOk.TLabel", background=C["card"], foreground=C["ok"], font=F(9))
         st.configure("TestBad.TLabel", background=C["card"], foreground=C["bad"], font=F(9))
@@ -1523,12 +1585,14 @@ class App(tk.Tk):
             "on": _checkbox_image(self, size, C["accent"], C["accent"], C["on_accent"], gap),
             "dis": _checkbox_image(self, size, C["card"], C["border"], None, gap),
         }
-        st.element_create("Modern.indicator", "image", self._chk_imgs["off"],
+        self._theme_gen = getattr(self, "_theme_gen", 0) + 1
+        indicator = f"Modern{self._theme_gen}.indicator"
+        st.element_create(indicator, "image", self._chk_imgs["off"],
                           ("disabled", self._chk_imgs["dis"]), ("selected", self._chk_imgs["on"]),
                           ("active", self._chk_imgs["hover"]), sticky="w")
         for name, bg in (("Card.TCheckbutton", C["card"]), ("TCheckbutton", C["bg"])):
             st.layout(name, [("Checkbutton.padding", {"sticky": "nswe", "children": [
-                ("Modern.indicator", {"side": "left", "sticky": ""}),
+                (indicator, {"side": "left", "sticky": ""}),
                 ("Checkbutton.label", {"side": "left", "sticky": "w", "expand": 1})]})])
             st.configure(name, background=bg, foreground=C["fg"], font=F(10), padding=[2, 2, 4, 2])
             st.map(name, background=[("active", bg)], foreground=[("disabled", C["faint"])])
@@ -1581,10 +1645,8 @@ class App(tk.Tk):
         names.pack(side="left")
         ttk.Label(names, text=APP_NAME, style="Title.TLabel").pack(anchor="w")
         ttk.Label(names, text=APP_TAGLINE, style="Sub.TLabel").pack(anchor="w")
-        ttk.Button(header, text="Donate", command=lambda: webbrowser.open(DONATE_URL),
-                   style="Donate.TButton", width=10, cursor="hand2").pack(side="right")
-        ttk.Button(header, text="⚙  Sources", command=self._open_sources_dialog,
-                   style="TButton", width=10).pack(side="right", padx=[0, 10])
+        ttk.Button(header, text="⚙  Settings", command=self._open_settings,
+                   style="TButton", width=11).pack(side="right")
 
         # folder card
         card = ttk.Frame(self, style="Card.TFrame", padding=[16, 14])
@@ -1727,12 +1789,7 @@ class App(tk.Tk):
         sb.pack(fill="y", side="right")
         tree.configure(yscrollcommand=sb.set)
 
-        tree.tag_configure("done", foreground=C["ok"])
-        tree.tag_configure("partial", foreground=C["warn"])
-        tree.tag_configure("fail", foreground=C["bad"])
-        tree.tag_configure("show", foreground=C["accent_hi"], font=F(10))
-        tree.tag_configure("season", foreground=C["muted"])
-        tree.tag_configure("stripe", background=C["stripe"])
+        self._tag_tree(tree)
 
         tree.bind("<Button-3>", lambda e: self._on_right_click(e, t))
         tree.bind("<Double-1>", lambda e: self._on_double_click(e, t))
@@ -1749,6 +1806,163 @@ class App(tk.Tk):
 
     def _log_visible(self) -> bool:
         return str(self.log_frame) in self.paned.panes()
+
+    @staticmethod
+    def _tag_tree(tree: ttk.Treeview) -> None:
+        tree.tag_configure("done", foreground=C["ok"])
+        tree.tag_configure("partial", foreground=C["warn"])
+        tree.tag_configure("fail", foreground=C["bad"])
+        tree.tag_configure("show", foreground=C["accent_hi"], font=F(10))
+        tree.tag_configure("season", foreground=C["muted"])
+        tree.tag_configure("stripe", background=C["stripe"])
+
+    def _apply_theme(self, accent: str, base: str) -> None:
+        """Switch colours live: ttk styles + the few plain-Tk widgets that hold their own colours."""
+        set_theme(accent, base)
+        self._setup_styles()
+        self.configure(bg=C["bg"])
+        self.log_text.configure(bg=C["surface"], fg=C["muted"])
+        self.spinner.configure(bg=C["bg"])
+        busy = self._spin_job is not None
+        self.spinner.itemconfigure(self._spin_track, outline=C["card_hi"] if busy else C["bg"])
+        self.spinner.itemconfigure(self._spin_arc, outline=C["accent_hi"] if busy else C["bg"])
+        self.context_menu.configure(bg=C["card"], activebackground=C["card_hi"], activeforeground=C["accent"])
+        for t in self.tabs.values():
+            self._tag_tree(t.tree)
+        for w in (getattr(self, "_settings_win", None), getattr(self, "_update_win", None)):
+            if w is not None and w.winfo_exists():
+                w.configure(bg=C["bg"])
+
+    # ---------- updates ----------
+    def _check_updates(self, manual: bool, button: ttk.Button | None = None, status: ttk.Label | None = None) -> None:
+        if button is not None:
+            button.state(["disabled"])
+        if status is not None:
+            status.configure(text="Checking GitHub…", style="TestBusy.TLabel")
+
+        def worker():
+            try:
+                rel, err = fetch_latest_release(), ""
+            except (requests.RequestException, ValueError) as e:
+                rel, err = None, short_error(e) if isinstance(e, requests.RequestException) else "bad response"
+            self.ui(done, rel, err)
+
+        def done(rel, err):
+            if button is not None and button.winfo_exists():
+                button.state(["!disabled"])
+            if rel and is_newer(rel["tag"]):
+                if status is not None and status.winfo_exists():
+                    status.configure(text=f"↑  {rel['name']} is available", style="TestOk.TLabel")
+                self.log(f"[INFO] Update available: {rel['name']} (you have v{APP_VERSION})")
+                self._show_update(rel)
+            elif rel:
+                if status is not None and status.winfo_exists():
+                    status.configure(text=f"✓  You have the latest version (v{APP_VERSION})", style="TestOk.TLabel")
+            elif manual and status is not None and status.winfo_exists():
+                status.configure(text=f"✗  Couldn't check for updates: {err}", style="TestBad.TLabel")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_update(self, rel: dict) -> None:
+        if getattr(self, "_update_win", None) is not None and self._update_win.winfo_exists():
+            self._update_win.lift()
+            return
+        win = tk.Toplevel(self)
+        self._update_win = win
+        win.title("Update available")
+        win.configure(bg=C["bg"])
+        win.transient(self)
+        self._dark_title_bar(win)
+        foot = ttk.Frame(win, padding=[20, 4, 20, 18])
+        foot.pack(side="bottom", fill="x")
+        body = ttk.Frame(win, padding=[20, 18, 20, 6])
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=f"{rel['name']} is available", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(body, text=f"You have v{APP_VERSION}. What's new:", style="Sub.TLabel").pack(anchor="w", pady=[2, 8])
+        notes = tk.Text(body, height=12, width=70, bg=C["surface"], fg=C["fg"], font=F(9), bd=0, padx=10, pady=8,
+                        highlightthickness=0, wrap="word", relief="flat")
+        notes.insert("1.0", re.sub(r"[*`#]+", "", rel["notes"]).strip() or "See the release page for details.")
+        notes.configure(state="disabled")
+        notes.pack(fill="both", expand=True)
+        bar = ttk.Progressbar(body, mode="determinate", style="Horizontal.TProgressbar")
+        msg = ttk.Label(body, text="", style="Sub.TLabel")
+
+        def close():
+            self._update_win = None
+            win.destroy()
+
+        can_install = is_frozen_exe() and bool(rel["exe_url"])
+        later = ttk.Button(foot, text="Later", command=close, width=10)
+        page = ttk.Button(foot, text="Open release page", width=18, command=lambda: webbrowser.open(rel["page"]))
+        if can_install:
+            go = ttk.Button(foot, text="Update now", style="Accent.TButton", width=14)
+            go.configure(command=lambda: self._install_update(rel, go, later, bar, msg))
+            go.pack(side="right")
+            page.pack(side="right", padx=[0, 8])
+        else:
+            page.configure(style="Accent.TButton")
+            page.pack(side="right")
+        later.pack(side="right", padx=[0, 8])
+        win.protocol("WM_DELETE_WINDOW", close)
+        win.bind("<Escape>", lambda e: close())
+        self._center_child(win, 620)
+
+    def _install_update(self, rel: dict, go: ttk.Button, later: ttk.Button, bar: ttk.Progressbar,
+                        msg: ttk.Label) -> None:
+        """Download the new exe, then a tiny helper script swaps it in after we exit and restarts SubScout."""
+        if self.busy:
+            msg.pack(anchor="w", pady=[8, 0])
+            msg.configure(text="Finish or cancel the current scan/download first.")
+            return
+        go.state(["disabled"])
+        later.state(["disabled"])
+        bar.pack(fill="x", pady=[10, 0])
+        msg.pack(anchor="w", pady=[6, 0])
+        msg.configure(text="Downloading…")
+        exe = sys.executable
+        new = os.path.join(tempfile.gettempdir(), "SubScout_update.exe")
+
+        def worker():
+            try:
+                with requests.get(rel["exe_url"], stream=True, timeout=DOWNLOAD_TIMEOUT,
+                                  headers={"User-Agent": f"SubScout/{APP_VERSION}"}) as r:
+                    r.raise_for_status()
+                    total = int(r.headers.get("Content-Length") or rel.get("exe_size") or 0)
+                    got = 0
+                    with open(new, "wb") as f:
+                        for chunk in r.iter_content(256 * 1024):
+                            f.write(chunk)
+                            got += len(chunk)
+                            if total:
+                                self.ui(lambda v=got * 100 / total: bar.configure(value=v))
+                with open(new, "rb") as f:
+                    if f.read(2) != b"MZ" or os.path.getsize(new) < 1_000_000:
+                        raise ValueError("downloaded file is not a valid program")
+                script = os.path.join(tempfile.gettempdir(), "SubScout_update.cmd")
+                with open(script, "w", encoding="utf-8") as f:
+                    f.write("@echo off\r\nchcp 65001 >nul\r\nset tries=0\r\n:wait\r\n"
+                            "timeout /t 1 /nobreak >nul\r\n"
+                            f'move /y "{new}" "{exe}" >nul 2>&1\r\n'
+                            "if errorlevel 1 (\r\n  set /a tries+=1\r\n  if %tries% lss 30 goto wait\r\n)\r\n"
+                            f'start "" "{exe}"\r\ndel "%~f0"\r\n')
+                subprocess.Popen(["cmd.exe", "/c", script], creationflags=0x08000000, close_fds=True)  # no window
+                self.ui(self._restart_for_update)
+            except Exception as e:
+                text = short_error(e) if isinstance(e, requests.RequestException) else str(e)
+                self.log(f"[ERROR] Update failed: {text}")
+
+                def failed():
+                    if msg.winfo_exists():
+                        msg.configure(text=f"Update failed: {text}")
+                        go.state(["!disabled"])
+                        later.state(["!disabled"])
+                self.ui(failed)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _restart_for_update(self) -> None:
+        self.log("Installing update — SubScout will restart…")
+        self._on_close()
 
     def _toggle_log(self, animate: bool = True) -> None:
         if self._log_anim is not None:  # a slide is already running: ignore extra clicks
@@ -1926,6 +2140,9 @@ class App(tk.Tk):
                 var.set(bool(langs.get(name, True)))
         self.var_overwrite.set(bool(data.get("overwrite", False)))
         self.var_recursive.set(bool(data.get("recursive", True)))
+        self.settings["theme_accent"] = data.get("theme_accent", DEFAULT_ACCENT)
+        self.settings["theme_base"] = data.get("theme_base", DEFAULT_BASE)
+        self.settings["check_updates"] = bool(data.get("check_updates", True))
         if not data.get("show_log", True):
             self._toggle_log(animate=False)
         win = data.get("window")
@@ -1954,6 +2171,9 @@ class App(tk.Tk):
         self.cur.path = self.ent_path.get().strip()
         data = {"languages": {n: v.get() for n, v in self.lang_vars.items()},
                 "overwrite": self.var_overwrite.get(), "recursive": self.var_recursive.get(),
+                "theme_accent": self.settings.get("theme_accent", DEFAULT_ACCENT),
+                "theme_base": self.settings.get("theme_base", DEFAULT_BASE),
+                "check_updates": self.settings.get("check_updates", True),
                 "show_log": self._log_visible(),
                 "log_height": self._current_log_px(), "layout": 3,
                 "window": self._window_state(),
@@ -2027,6 +2247,12 @@ class App(tk.Tk):
     def _on_close(self) -> None:
         self.cancel.set()
         self._save_settings()
+        for job in (getattr(self, "_drain_job", None), self._spin_job, self._log_anim):
+            if job is not None:
+                try:
+                    self.after_cancel(job)
+                except tk.TclError:
+                    pass
         self.destroy()
 
     # ---------- sources ----------
@@ -2069,11 +2295,14 @@ class App(tk.Tk):
             chain.append(p)
         return chain
 
-    def _open_sources_dialog(self) -> None:
-        if self.busy:
+    def _open_settings(self, tab: str = "sources") -> None:
+        if getattr(self, "_settings_win", None) is not None and self._settings_win.winfo_exists():
+            self._settings_win.lift()
+            self._settings_nb.select({"sources": 0, "themes": 1, "about": 2}.get(tab, 0))
             return
         win = tk.Toplevel(self)
-        win.title("Subtitle Sources")
+        self._settings_win = win
+        win.title(f"{APP_NAME} Settings")
         win.configure(bg=C["bg"])
         win.transient(self)
         self._dark_title_bar(win)
@@ -2081,14 +2310,23 @@ class App(tk.Tk):
 
         btns = ttk.Frame(win, padding=[20, 4, 20, 18])  # footer first: it can never be pushed off-screen
         btns.pack(side="bottom", fill="x")
-        body = ttk.Frame(win, padding=[20, 20, 20, 4])
-        body.pack(fill="both", expand=True)
-        ttk.Label(body, text="Subtitle Sources", style="Title.TLabel").pack(anchor="w")
+        outer = ttk.Frame(win, padding=[20, 18, 20, 4])
+        outer.pack(fill="both", expand=True)
+        ttk.Label(outer, text="Settings", style="Title.TLabel").pack(anchor="w", pady=[0, 10])
+        nb = ttk.Notebook(outer)
+        nb.pack(fill="both", expand=True)
+        self._settings_nb = nb
+        body = ttk.Frame(nb, style="Card.TFrame", padding=[16, 14])
+        themes_tab = ttk.Frame(nb, style="Card.TFrame", padding=[16, 14])
+        about_tab = ttk.Frame(nb, style="Card.TFrame", padding=[16, 14])
+        nb.add(body, text="  Sources  ")
+        nb.add(themes_tab, text="  Themes  ")
+        nb.add(about_tab, text="  About  ")
         ttk.Label(body, text="In Auto mode the sources are tried top to bottom until one has the subtitle. "
-                             "Click ☑ to switch a source on/off.", style="Sub.TLabel",
-                  wraplength=int(620 * self.scale)).pack(anchor="w", pady=[2, 12])
+                             "Click ☑ to switch a source on/off.", style="CardMuted.TLabel",
+                  wraplength=int(620 * self.scale)).pack(anchor="w", pady=[0, 10])
 
-        lst_card = ttk.Frame(body, style="Card.TFrame", padding=8)
+        lst_card = ttk.Frame(body, style="Surface.TFrame", padding=8)
         lst_card.pack(fill="x")
         tv = ttk.Treeview(lst_card, columns=("on", "name", "note"), show="headings", height=len(order),
                           selectmode="browse")
@@ -2129,14 +2367,14 @@ class App(tk.Tk):
                 refresh(sel[0])
 
         tv.bind("<Button-1>", on_click)
-        side = ttk.Frame(lst_card, style="Card.TFrame")
+        side = ttk.Frame(lst_card, style="Surface.TFrame")
         side.pack(side="right", fill="y", padx=[8, 0])
         ttk.Button(side, text="▲  Up", style="Pill.TButton", command=lambda: move(-1)).pack(fill="x", pady=[0, 6])
         ttk.Button(side, text="▼  Down", style="Pill.TButton", command=lambda: move(1)).pack(fill="x")
         refresh()
 
-        keys = ttk.Frame(body, style="Card.TFrame", padding=[16, 12])
-        keys.pack(fill="x", pady=[14, 0])
+        keys = ttk.Frame(body, style="Card.TFrame", padding=[0, 6])
+        keys.pack(fill="x", pady=[10, 0])
         ttk.Label(keys, text="API KEYS & LOGIN", style="Section.TLabel").grid(row=0, column=0, sticky="w", columnspan=3)
         fields = {k: tk.StringVar(value=self.settings.get(k, "")) for k in
                   ("subdl_api_key", "subsource_api_key", "os_api_key", "os_username", "os_password")}
@@ -2202,20 +2440,148 @@ class App(tk.Tk):
                   wraplength=int(640 * self.scale)).grid(row=grid_row, column=0, columnspan=4,
                                                          sticky="w", pady=[10, 0])
 
+        # ---------------- Themes tab ----------------
+        theme = {"accent": self.settings.get("theme_accent", DEFAULT_ACCENT),
+                 "base": self.settings.get("theme_base", DEFAULT_BASE)}
+        original = dict(theme)
+        self._build_themes_tab(themes_tab, theme)
+
+        # ---------------- About tab ----------------
+        self._build_about_tab(about_tab)
+
         def save():
             self.settings["providers"] = order
             for k, var in fields.items():
-                self.settings[k] = var.get().strip()
+                self.settings[k] = var.get() if k == "os_password" else var.get().strip()
+            self.settings["theme_accent"], self.settings["theme_base"] = theme["accent"], theme["base"]
             self._save_settings()
             self._refresh_source_choices()
-            self.log("Sources updated: " + " → ".join(PROVIDERS[p["key"]].short for p in order if p["enabled"]))
+            self.log("Settings saved. Sources: " + " → ".join(PROVIDERS[p["key"]].short for p in order if p["enabled"])
+                     + f" · Theme: {theme['accent']} / {theme['base']}")
+            close()
+
+        def cancel():
+            if theme != original:  # undo the live preview
+                self._apply_theme(original["accent"], original["base"])
+            close()
+
+        def close():
+            self._settings_win = None
             win.destroy()
 
         ttk.Button(btns, text="Save", style="Accent.TButton", command=save, width=12).pack(side="right")
-        ttk.Button(btns, text="Cancel", command=win.destroy, width=10).pack(side="right", padx=[0, 8])
-        win.bind("<Escape>", lambda e: win.destroy())
-        self._center_child(win, 700)
+        ttk.Button(btns, text="Cancel", command=cancel, width=10).pack(side="right", padx=[0, 8])
+        win.protocol("WM_DELETE_WINDOW", cancel)
+        win.bind("<Escape>", lambda e: cancel())
+        nb.select({"sources": 0, "themes": 1, "about": 2}.get(tab, 0))
+        self._center_child(win, 740)
         win.grab_set()
+
+    # ---------- Settings → Themes ----------
+    def _build_themes_tab(self, parent: ttk.Frame, theme: dict) -> None:
+        ttk.Label(parent, text="ACCENT COLOUR", style="Section.TLabel").pack(anchor="w")
+        acc_row = ttk.Frame(parent, style="Card.TFrame")
+        acc_row.pack(anchor="w", pady=[6, 16])
+        ttk.Label(parent, text="BACKGROUND", style="Section.TLabel").pack(anchor="w")
+        base_row = ttk.Frame(parent, style="Card.TFrame")
+        base_row.pack(anchor="w", pady=[6, 16])
+        ttk.Label(parent, text="Changes preview instantly — press Save to keep them.",
+                  style="CardMuted.TLabel").pack(anchor="w")
+        s = self.scale
+        swatches: list = []
+
+        def draw():
+            for cv, kind, name in swatches:
+                cv.configure(bg=C["card"])
+                cv.delete("all")
+                w = int(cv["width"])
+                selected = theme[kind] == name
+                if kind == "accent":
+                    col = ACCENTS[name][0]
+                    r = int(15 * s)
+                    cx, cy = w // 2, int(22 * s)
+                    if selected:
+                        cv.create_oval(cx - r - 5, cy - r - 5, cx + r + 5, cy + r + 5, outline=C["fg"], width=2)
+                    cv.create_oval(cx - r, cy - r, cx + r, cy + r, fill=col, outline=col)
+                    if selected:
+                        cv.create_text(cx, cy, text="✓", fill=ACCENTS[name][4], font=F(11))
+                    cv.create_text(cx, int(54 * s), text=name, fill=C["fg"] if selected else C["muted"], font=F(9))
+                else:
+                    bg, surface, card = BASES[name][0], BASES[name][1], BASES[name][2]
+                    x0, y0, x1, y1 = int(4 * s), int(4 * s), w - int(4 * s), int(50 * s)
+                    cv.create_rectangle(x0, y0, x1, y1, fill=bg, outline=C["fg"] if selected else C["border"],
+                                        width=2 if selected else 1)
+                    p = int(7 * s)
+                    cv.create_rectangle(x0 + p, y0 + p, x1 - p, y0 + 2 * p, fill=card, outline=card)
+                    cv.create_rectangle(x0 + p, y0 + 3 * p, x1 - p, y1 - p, fill=surface, outline=surface)
+                    cv.create_rectangle(x0 + 2 * p, y0 + 4 * p, x0 + 6 * p, y0 + int(4.6 * p),
+                                        fill=C["accent"], outline=C["accent"])
+                    cv.create_text(w // 2, int(66 * s), text=name, fill=C["fg"] if selected else C["muted"], font=F(9))
+
+        def pick(kind: str, name: str):
+            if theme[kind] == name:
+                return
+            theme[kind] = name
+            self._apply_theme(theme["accent"], theme["base"])
+            draw()
+
+        for name in ACCENTS:
+            cv = tk.Canvas(acc_row, width=int(88 * s), height=int(66 * s), highlightthickness=0, bd=0, cursor="hand2")
+            cv.pack(side="left", padx=[0, 2])
+            cv.bind("<Button-1>", lambda e, n=name: pick("accent", n))
+            swatches.append((cv, "accent", name))
+        for name in BASES:
+            cv = tk.Canvas(base_row, width=int(124 * s), height=int(78 * s), highlightthickness=0, bd=0, cursor="hand2")
+            cv.pack(side="left", padx=[0, 10])
+            cv.bind("<Button-1>", lambda e, n=name: pick("base", n))
+            swatches.append((cv, "base", name))
+        draw()
+
+    # ---------- Settings → About ----------
+    def _build_about_tab(self, parent: ttk.Frame) -> None:
+        top = ttk.Frame(parent, style="Card.TFrame")
+        top.pack(fill="x")
+        self._about_icon = tk.PhotoImage(data=ICON_64_PNG)
+        ttk.Label(top, image=self._about_icon, style="Card.TLabel").pack(side="left", padx=[0, 14])
+        names = ttk.Frame(top, style="Card.TFrame")
+        names.pack(side="left")
+        ttk.Label(names, text=APP_NAME, style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(names, text=f"Version {APP_VERSION}  ·  {APP_TAGLINE}", style="CardMuted.TLabel").pack(anchor="w")
+
+        ttk.Label(parent, text=(
+            "SubScout scans your movie and TV-series folders and downloads the missing English and Arabic "
+            "subtitles for every file. It searches several subtitle sites (YTS Subs, SubDL, SubSource, "
+            "OpenSubtitles, Addic7ed), only downloads what's missing, picks the right episode from season "
+            "packs and converts Arabic subtitles to UTF-8 so every player shows them correctly."),
+            style="Card.TLabel", wraplength=int(660 * self.scale), justify="left").pack(anchor="w", pady=[14, 12])
+
+        info = ttk.Frame(parent, style="Card.TFrame")
+        info.pack(anchor="w")
+        rows = (("Made by", AUTHOR, AUTHOR_URL), ("Source code", GITHUB_URL.replace("https://", ""), GITHUB_URL),
+                ("Report a problem", "GitHub Issues", f"{GITHUB_URL}/issues"))
+        for i, (label, text, url) in enumerate(rows):
+            ttk.Label(info, text=label, style="CardMuted.TLabel").grid(row=i, column=0, sticky="w", pady=2)
+            link = ttk.Label(info, text=text, style="Link.TLabel", cursor="hand2")
+            link.grid(row=i, column=1, sticky="w", padx=[16, 0], pady=2)
+            link.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+
+        actions = ttk.Frame(parent, style="Card.TFrame")
+        actions.pack(fill="x", pady=[18, 0])
+        ttk.Button(actions, text="♥  Donate", style="Donate.TButton", width=16, cursor="hand2",
+                   command=lambda: webbrowser.open(DONATE_URL)).pack(side="left")
+        btn = ttk.Button(actions, text="Check for updates", style="Accent.TButton", width=18)
+        btn.pack(side="left", padx=[10, 0])
+        status = ttk.Label(parent, text="", style="TestBusy.TLabel")
+        status.pack(anchor="w", pady=[10, 0])
+        btn.configure(command=lambda: self._check_updates(manual=True, button=btn, status=status))
+        self._var_auto_update = tk.BooleanVar(value=self.settings.get("check_updates", True))
+        ttk.Checkbutton(parent, text="Check for updates when SubScout starts", variable=self._var_auto_update,
+                        style="Card.TCheckbutton", command=self._on_auto_update_toggled).pack(anchor="w", pady=[8, 0])
+
+    def _on_auto_update_toggled(self) -> None:
+        self.settings["check_updates"] = self._var_auto_update.get()
+        self._save_settings()
+
 
     # ---------- per-folder IMDb mapping cache ----------
     def _load_mapping(self, folder: str) -> dict:
@@ -2854,7 +3220,7 @@ class App(tk.Tk):
             kind = "movie" if t.key == "movies" else "episode"
             chain = self._build_chain(kind, source)
             if not chain:
-                self.log("[ERROR] No usable source. Open ⚙ Sources to enable one or add an API key.")
+                self.log("[ERROR] No usable source. Open ⚙ Settings → Sources to enable one or add an API key.")
                 self.progress_finish(canceled=True)
                 return
             for p in chain:

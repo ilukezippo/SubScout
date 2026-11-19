@@ -10,7 +10,11 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshot.png" alt="SubScout screenshot" width="900">
+  <img src="assets/screenshot.png" alt="SubScout main window" width="900">
+</p>
+<p align="center">
+  <img src="assets/settings-about.png" alt="Settings: About" width="440">
+  <img src="assets/settings-themes.png" alt="Settings: Themes" width="440">
 </p>
 
 ---
@@ -27,7 +31,8 @@ Point SubScout at a movie folder or a TV-series folder. It scans every video, wo
 - **Arabic just works.** Old Windows-1256 subtitles are converted to UTF-8, so every player shows them correctly.
 - **Movies or series.** Movies can sit in subfolders (`Movie (2010)/movie.mkv`). Series are read as `Show/Season N/Show.S01E02.mkv`; loose episodes in the show folder work too.
 - **Select all / none / missing**, a live filter, sortable columns, and a per-file subtitle status (`EN ✓ AR ✗`).
-- **Modern dark UI.** Segoe UI Bold throughout, a resizable log with a *Copy log* button, and Windows sounds when a job finishes or something fails.
+- **Modern dark UI with themes.** Six accent colours and three backgrounds (Midnight, OLED Black, Slate), Segoe UI Bold throughout, a resizable log with *Copy log*, and Windows sounds when a job finishes or something fails.
+- **Keeps itself up to date.** It checks GitHub for a new version when it starts; *Update now* downloads the new exe, swaps it in and restarts.
 
 ## Subtitle sources
 
@@ -40,7 +45,7 @@ Point SubScout at a movie folder or a TV-series folder. It scans every video, wo
 | **SubDL (website)** | | ✓ | nothing (scraper, needs `cloudscraper`) |
 | **Gestdown (Addic7ed)** | | ✓ | nothing · mostly English |
 
-Open **⚙ Sources** to switch sources on or off, change their order, paste your keys and press **Test** / **Test login** to check them.
+Open **⚙ Settings → Sources** to switch sources on or off, change their order, paste your keys and press **Test** / **Test login** to check them.
 
 ## Download
 
@@ -78,7 +83,7 @@ Every push to `main` that changes the app is built automatically by GitHub Actio
 
 | What | Where |
 |---|---|
-| Settings, source order, API keys | `%LOCALAPPDATA%\SubScout\settings.json` |
+| Settings, source order, API keys, theme | `%LOCALAPPDATA%\SubScout\settings.json` |
 | OpenSubtitles password | Windows Credential Manager |
 | IMDb matches (per folder) | `.yify_imdb_map.json` inside each scanned folder, so re-scans are instant |
 | Crash details | `%LOCALAPPDATA%\SubScout\crash_report.txt` |

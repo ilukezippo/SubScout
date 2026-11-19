@@ -8,7 +8,11 @@ First release of **SubScout**: English & Arabic subtitles for your whole movie a
 - **Season packs:** the right episode is picked from the ZIP
 - **Arabic Windows-1256 subtitles** are converted to UTF-8
 - **Select all / none / missing,** live filter, sortable columns, per-file `EN ✓ AR ✗` status
-- **Sources window** with *Test* buttons for API keys and the OpenSubtitles login
+- **Settings window** with three tabs:
+  - **Sources:** order and on/off switches, API keys, with *Test* buttons for the keys and the OpenSubtitles login
+  - **Themes:** 6 accent colours × 3 backgrounds, previewed live
+  - **About:** app info, *Donate*, and *Check for updates*
+- **Auto-update:** checks GitHub at start-up; *Update now* replaces the exe and restarts
 - **Modern dark UI** (Segoe UI Bold), resizable log with *Copy log*, and Windows sounds on finish/error
 
 ### Download & run
