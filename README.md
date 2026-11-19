@@ -5,7 +5,7 @@
 <h1 align="center">SubScout</h1>
 
 <p align="center">
-  <b>English &amp; Arabic subtitles for your whole movie and TV-series library.</b><br>
+  <b>English &amp; Arabic subtitles for your whole movie, TV-series and anime library.</b><br>
   Scans your folders and downloads only the missing subtitles, from several subtitle sites, in one click.
 </p>
 
@@ -48,7 +48,8 @@ Point SubScout at a movie folder or a TV-series folder. It scans every video, wo
 - **Smart for YIFY / YTS releases.** Those try YTS Subs first: no quota, and the subtitles are timed for that exact release.
 - **Season packs handled.** It picks the right episode's file out of a season ZIP, and never mixes up `E01` with `E10`.
 - **Arabic just works.** Old Windows-1256 subtitles are converted to UTF-8, so every player shows them correctly.
-- **Movies or series.** Movies can sit in subfolders (`Movie (2010)/movie.mkv`). Series are read as `Show/Season N/Show.S01E02.mkv`; loose episodes in the show folder work too.
+- **Movies, series or anime.** Movies can sit in subfolders (`Movie (2010)/movie.mkv`). Series are read as `Show/Season N/Show.S01E02.mkv`; loose episodes in the show folder work too.
+- **Anime tab.** It understands fansub naming such as `[SubsPlease] Frieren - 12 (1080p) [ABCD1234].mkv`, `Show_012v2`, `Ep 12`, `#12` and absolute numbering like `One Piece - 1100`. The season comes from the folder (`Season 2`, `S2`, `2nd Season`). Styled `.ass` fansubs are kept as `.ar.ass` / `.en.ass`.
 - **Select all / none / missing**, a live filter, sortable columns, and a per-file subtitle status (`EN ✓ AR ✗`).
 - **Modern UI with dark & white themes.** Dark or White: six accent colours and four backgrounds (Midnight, OLED Black, Slate, White), Segoe UI Bold throughout, a resizable log with *Copy log*, and Windows sounds when a job finishes or something fails.
 - **Keeps itself up to date.** It checks GitHub for a new version when it starts; *Update now* downloads the new exe, swaps it in and restarts.

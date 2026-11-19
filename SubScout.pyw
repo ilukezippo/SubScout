@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SubScout  v1.0
+SubScout  v1.1
 --------------
 https://github.com/ilukezippo/SubScout
 Finds and downloads English / Arabic subtitles for a movie folder or a TV-series folder.
@@ -59,9 +59,9 @@ except ImportError:
 
 # ============================== Config ==============================
 APP_NAME = "SubScout"
-APP_TAGLINE = "Movie & series subtitles · English & Arabic · multiple sources"
+APP_TAGLINE = "Movie, series & anime subtitles · English & Arabic · multiple sources"
 APP_ID = "ilukezippo.SubScout"
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 DONATE_URL = "https://buymeacoffee.com/ilukezippo"
 AUTHOR = "ilukezippo"
 GITHUB_REPO = "ilukezippo/SubScout"
@@ -318,8 +318,13 @@ def is_video(name: str) -> bool:
     return os.path.splitext(name)[1].lower() in VIDEO_EXTS and not _SKIP_FILE_RX.search(os.path.splitext(name)[0])
 
 
-def srt_target(video_path: str, lang_code: str) -> str:
-    return f"{os.path.splitext(video_path)[0]}.{lang_code}.srt"
+SUB_EXTS = (".srt", ".ass", ".ssa")
+SERIES_TABS = ("series", "anime")   # tabs laid out as Show → Season → Episode
+TAB_KEYS = ("movies", "series", "anime")
+
+
+def srt_target(video_path: str, lang_code: str, ext: str = ".srt") -> str:
+    return f"{os.path.splitext(video_path)[0]}.{lang_code}{ext}"
 
 
 def existing_subs(video_path: str, dir_names_lower: set | None = None) -> set:
@@ -332,7 +337,7 @@ def existing_subs(video_path: str, dir_names_lower: set | None = None) -> set:
         except OSError:
             return set()
     return {code for code, aliases in LANG_ALIASES.items()
-            if any(f"{stem}.{a}.srt" in dir_names_lower for a in aliases)}
+            if any(f"{stem}.{a}{ext}" in dir_names_lower for a in aliases for ext in SUB_EXTS)}
 
 
 def read_json(path: str, default):
@@ -496,6 +501,48 @@ def parse_episode(filename: str, season_dir: str = "") -> tuple[int, int] | None
     return None
 
 
+_ANIME_SEASON_RX = re.compile(r"(?i)(?:\bs(?:eason)?\s*0*(\d{1,2})\b|\b(\d)(?:st|nd|rd|th)\s+season\b)")
+
+
+def anime_title(folder_name: str) -> tuple[str, str]:
+    """'[Judas] Frieren - Beyond Journey's End (Season 2) [1080p]' -> ("Frieren Beyond Journey's End", "")."""
+    year_m = re.search(r"[\[(]((?:19|20)\d\d)[\])]", folder_name)
+    name = _strip_tags(folder_name)
+    name = re.sub(r"(?i)\b(s\d{1,2}|season\s*\d+|\d(?:st|nd|rd|th)\s+season|complete|batch)\b", " ", name)
+    title, year = clean_filename_to_title(name)
+    title = re.sub(r"[\s\-:]+$", "", title).strip() or title
+    return title, year or (year_m.group(1) if year_m else "")
+
+
+def parse_anime_episode(filename: str, season_dir: str = "", show_dir: str = "") -> tuple[int, int] | None:
+    """Anime naming: '[Group] Show - 12 (1080p).mkv', 'Show_012v2', 'Show Ep 12', 'Show #12' or S01E12.
+    Episode numbers are often absolute; the season comes from the folder ('Season 2', 'S2', '2nd Season') or is 1."""
+    std = parse_episode(filename, season_dir)
+    if std:
+        return std
+    name = _strip_tags(filename)
+    ep = None
+    for rx in (r"\s-\s*0*(\d{1,4})(?:v\d)?(?=\s|$|_|\.)",          # "Show - 12"
+               r"(?i)\b(?:ep?|episode|#)\s*\.?\s*0*(\d{1,4})\b",       # "Ep 12", "E12", "#12"
+               r"(?i)(?:^|[\s_.])0*(\d{1,4})(?:v\d)?(?=[\s_.]*$)"):      # trailing number "Show 12"
+        m = re.search(rx, name)
+        if m:
+            ep = int(m.group(1))
+            break
+    if ep is None:
+        nums = [n for n in re.findall(r"(?<![\d.])(\d{1,4})(?:v\d)?(?![\d.])", name) if not re.fullmatch(r"(19|20)\d\d", n)]
+        if not nums:
+            return None
+        ep = int(nums[-1])
+    season = 1
+    for src in (season_dir, show_dir):
+        m = _ANIME_SEASON_RX.search(src or "")
+        if m:
+            season = int(m.group(1) or m.group(2))
+            break
+    return season, ep
+
+
 # ============================== IMDb lookup ==============================
 def _imdb_suggest(query: str) -> list:
     first = query[0] if query[0].isalnum() else "1"
@@ -533,38 +580,63 @@ def _episode_rx(season: int, episode: int) -> list[re.Pattern]:
         re.compile(rf"s0*{season}[ ._-]?e0*{episode}(?!\d)", re.IGNORECASE),
         re.compile(rf"(?<!\d){season}x0*{episode}(?!\d)", re.IGNORECASE),
         re.compile(rf"(?:\bep?(?:isode)?)[ ._-]?0*{episode}(?!\d)", re.IGNORECASE),
+        # anime packs: "Frieren - 12.ass", "[Group] Show [12].ass", "Show_012v2.ass"
+        re.compile(rf"(?:^|[ ._\-\[(#])0*{episode}(?:v\d)?(?=[ ._\-\])]|$)", re.IGNORECASE),
     ]
 
 
-def pick_srt(zip_bytes: bytes, episode: tuple[int, int] | None = None) -> tuple[bytes | None, str]:
-    """Pick the right .srt from a ZIP. For season packs, picks the requested episode's file."""
+def _strip_tags(name: str) -> str:
+    """'[SubsPlease] Frieren - 12 (1080p) [ABCD1234].mkv' -> ' Frieren - 12  ' (no groups, CRCs, quality)."""
+    ext = os.path.splitext(name)[1].lower()
+    name = os.path.splitext(name)[0] if ext in VIDEO_EXTS or ext in SUB_EXTS else name
+    name = re.sub(r"[\[(][^\])]*[\])]", " ", name)
+    return re.sub(r"(?i)\b(2160p|1080p|720p|480p|x26[45]|h\.?26[45]|hevc|av1|aac|flac|opus|10bit|8bit|"
+                  r"bd|bdrip|web|web-?dl|webrip|bluray|dual|multi)\b", " ", name)
+
+
+def pick_subtitle(zip_bytes: bytes, episode: tuple[int, int] | None = None,
+                  prefer: tuple = (".srt",)) -> tuple[bytes | None, str]:
+    """Pick the right subtitle from a ZIP: allowed formats in `prefer` order; for season packs the
+    requested episode's file. Returns (data, filename) or (None, reason)."""
     with ZipFile(BytesIO(zip_bytes)) as zf:
-        srts = [i for i in zf.infolist() if not i.is_dir() and i.filename.lower().endswith(".srt")]
-        if not srts:
-            return None, "archive contains no .srt"
-        if len(srts) == 1:
-            return zf.read(srts[0]), srts[0].filename
+        files = [i for i in zf.infolist() if not i.is_dir() and os.path.splitext(i.filename)[1].lower() in prefer]
+        if not files:
+            return None, f"archive contains no {'/'.join(prefer)}"
+        files.sort(key=lambda i: prefer.index(os.path.splitext(i.filename)[1].lower()))  # preferred format first
+        if len(files) == 1:
+            return zf.read(files[0]), files[0].filename
         if episode:
             for rx in _episode_rx(*episode):
-                hit = next((i for i in srts if rx.search(os.path.basename(i.filename))), None)
-                if hit:
-                    return zf.read(hit), hit.filename
+                for i in files:
+                    base = os.path.basename(i.filename)
+                    if rx.search(base) or (rx.pattern.startswith("(?:^") and rx.search(_strip_tags(base))):
+                        return zf.read(i), i.filename
             return None, f"season pack has no file for S{episode[0]:02d}E{episode[1]:02d}"
-        best = max(srts, key=lambda i: i.file_size)
+        top_ext = os.path.splitext(files[0].filename)[1].lower()
+        best = max((i for i in files if i.filename.lower().endswith(top_ext)), key=lambda i: i.file_size)
         return zf.read(best), best.filename
 
 
-def extract_subtitle(data: bytes, episode: tuple[int, int] | None = None) -> bytes:
-    """Accepts a ZIP or a raw .srt. Raises LookupError when nothing usable is inside."""
+def pick_srt(zip_bytes: bytes, episode: tuple[int, int] | None = None) -> tuple[bytes | None, str]:
+    return pick_subtitle(zip_bytes, episode, (".srt",))
+
+
+def extract_subtitle_ext(data: bytes, episode: tuple[int, int] | None = None,
+                         prefer: tuple = (".srt", ".ass", ".ssa")) -> tuple[bytes, str]:
+    """Accepts a ZIP or a raw subtitle. Returns (data, extension). Raises LookupError when nothing usable."""
     if data[:2] == b"PK":
-        srt, info = pick_srt(data, episode)
-        if srt is None:
-            raise LookupError(info)
-        return srt
+        sub, name = pick_subtitle(data, episode, prefer)
+        if sub is None:
+            raise LookupError(name)
+        return sub, os.path.splitext(name)[1].lower()
     head = data[:600].lstrip(codecs.BOM_UTF8).lstrip().lower()
     if not data.strip() or head.startswith((b"<!doctype", b"<html")):
         raise LookupError("download returned a web page instead of a subtitle")
-    return data
+    return data, (".ass" if head.startswith(b"[script info]") else ".srt")
+
+
+def extract_subtitle(data: bytes, episode: tuple[int, int] | None = None) -> bytes:
+    return extract_subtitle_ext(data, episode, (".srt",))[0]
 
 
 def normalize_encoding(data: bytes, lang_code: str) -> bytes:
@@ -601,6 +673,12 @@ class Media:
     season: int | None = None
     episode: int | None = None
     season_dir: str = ""
+    anime: bool = False
+
+    @property
+    def sub_formats(self) -> tuple:
+        """Anime keeps styled .ass fansubs first; everything else prefers plain .srt."""
+        return (".ass", ".ssa", ".srt") if self.anime else (".srt", ".ass", ".ssa")
 
     @property
     def ep(self) -> tuple[int, int] | None:
@@ -1402,7 +1480,7 @@ class App(tk.Tk):
         self.scale = max(1.0, self.winfo_fpixels("1i") / 96.0)
         self.configure(bg=C["bg"])
 
-        self.tabs = {"movies": TabState("movies"), "series": TabState("series")}
+        self.tabs = {key: TabState(key) for key in TAB_KEYS}
         self.active = "movies"
         self.busy: str | None = None
         self.cancel = threading.Event()
@@ -1696,7 +1774,7 @@ class App(tk.Tk):
         # tabs
         self.notebook = ttk.Notebook(top)
         self.notebook.pack(fill="both", expand=True, padx=pad, pady=[16, 0])
-        for key, label in (("movies", "🎬  Movies"), ("series", "📺  Series")):
+        for key, label in (("movies", "🎬  Movies"), ("series", "📺  Series"), ("anime", "🌸  Anime")):
             frame = ttk.Frame(self.notebook, style="Card.TFrame", padding=[12, 12, 12, 12])
             self.notebook.add(frame, text=label)
             self._build_tab(frame, self.tabs[key])
@@ -1783,7 +1861,7 @@ class App(tk.Tk):
 
         box = ttk.Frame(parent, style="Card.TFrame")
         box.pack(fill="both", expand=True)
-        is_series = t.key == "series"
+        is_series = t.key in SERIES_TABS
         tree = ttk.Treeview(box, columns=COLUMNS, show="tree headings" if is_series else "headings",
                             selectmode="browse")
         s = self.scale
@@ -2142,8 +2220,9 @@ class App(tk.Tk):
         self.btn_scan.state(["disabled"] if mode == "download" else ["!disabled"])
         self.btn_download.configure(text="■  Cancel" if mode == "download" else "⬇  Download Subtitles")
         self.btn_download.state(["disabled"] if mode == "scan" else ["!disabled"])
-        other = 1 if self.active == "movies" else 0
-        self.notebook.tab(other, state="normal" if idle else "disabled")
+        for i, key in enumerate(TAB_KEYS):  # lock the other tabs while a job runs
+            if key != self.active:
+                self.notebook.tab(i, state="normal" if idle else "disabled")
         if idle:
             self.cb_recursive.state(["!disabled"] if self.active == "movies" else ["disabled"])
             self._update_counts(self.cur)
@@ -2570,7 +2649,7 @@ class App(tk.Tk):
         ttk.Label(names, text=f"Version {APP_VERSION}  ·  {APP_TAGLINE}", style="CardMuted.TLabel").pack(anchor="w")
 
         ttk.Label(parent, text=(
-            "SubScout scans your movie and TV-series folders and downloads the missing English and Arabic "
+            "SubScout scans your movie, TV-series and anime folders and downloads the missing English and Arabic "
             "subtitles for every file. It searches several subtitle sites (YTS Subs, SubDL, SubSource, "
             "OpenSubtitles, Addic7ed), only downloads what's missing, picks the right episode from season "
             "packs and converts Arabic subtitles to UTF-8 so every player shows them correctly."),
@@ -2625,7 +2704,7 @@ class App(tk.Tk):
 
     # ---------- tabs, filter, sort ----------
     def _on_tab_changed(self, _event=None) -> None:
-        new = "series" if self.notebook.index(self.notebook.select()) == 1 else "movies"
+        new = TAB_KEYS[self.notebook.index(self.notebook.select())]
         if new == self.active:
             return
         self.cur.path = self.ent_path.get().strip()
@@ -2720,7 +2799,7 @@ class App(tk.Tk):
 
     def _refresh_parents(self, t: TabState) -> None:
         """Series: parent checkboxes follow their episodes; show/season rows summarise progress."""
-        if t.key != "series":
+        if t.key not in SERIES_TABS:
             return
         need = {c for _, c in self._selected_langs()}
         stats: dict[str, list[int]] = {}
@@ -2747,7 +2826,7 @@ class App(tk.Tk):
         leaves = [r for r in t.rows.values() if r["type"] in LEAF]
         missing = sum(1 for r in leaves if need - r.get("have", set()))
         selected = sum(1 for r in leaves if r["enabled"])
-        noun = "episodes" if t.key == "series" else "movies"
+        noun = "movies" if t.key == "movies" else "episodes"
         t.counts_label.configure(  # type: ignore[attr-defined]
             text=f"{len(leaves)} {noun}   ·   {missing} missing subtitles   ·   {selected} selected" if leaves else "")
 
@@ -2862,7 +2941,8 @@ class App(tk.Tk):
 
     def _scan_worker(self, t: TabState, folder: str, recursive: bool) -> None:
         try:
-            entries = self._scan_movies(folder, recursive) if t.key == "movies" else self._scan_series(folder)
+            entries = (self._scan_movies(folder, recursive) if t.key == "movies"
+                       else self._scan_series(folder, anime=t.key == "anime"))
             if self.cancel.is_set():
                 self.log("Scan canceled.")
                 self.progress_finish(canceled=True)
@@ -2912,7 +2992,7 @@ class App(tk.Tk):
         out.sort(key=lambda d: natural_key(d["key"]))
         return out
 
-    def _scan_series(self, root: str) -> list:
+    def _scan_series(self, root: str, anime: bool = False) -> list:
         with os.scandir(root) as it:
             show_dirs = sorted((e for e in it if e.is_dir() and not e.name.startswith((".", "$"))),
                                key=lambda e: natural_key(e.name))
@@ -2921,7 +3001,7 @@ class App(tk.Tk):
         for sd in show_dirs:
             if self.cancel.is_set():
                 break
-            title, year = clean_filename_to_title(sd.name)
+            title, year = anime_title(sd.name) if anime else clean_filename_to_title(sd.name)
             seasons = []
             try:
                 with os.scandir(sd.path) as it:
@@ -3014,7 +3094,7 @@ class App(tk.Tk):
 
     # ---------- IMDb matching ----------
     def _match_imdb(self, t: TabState) -> None:
-        kind = "series" if t.key == "series" else "movie"
+        kind = "series" if t.key in SERIES_TABS else "movie"
         targets = [(iid, r["key"], r["parsed_title"], r.get("year", ""))
                    for iid, r in t.rows.items()
                    if r["type"] in ("movie", "show") and not r.get("tt") and not r.get("not_found")]
@@ -3206,9 +3286,12 @@ class App(tk.Tk):
                 m = Media("movie", r["path"], r["filename"], r["parsed_title"], r.get("year", ""), r.get("tt", ""))
             else:
                 show = t.rows[r["show"]]
-                ep = parse_episode(r["filename"], r.get("season_dir", ""))
+                anime = t.key == "anime"
+                ep = (parse_anime_episode(r["filename"], r.get("season_dir", ""), show["filename"]) if anime
+                      else parse_episode(r["filename"], r.get("season_dir", "")))
                 m = Media("episode", r["path"], r["filename"], show["parsed_title"], show.get("year", ""),
-                          show.get("tt", ""), ep[0] if ep else None, ep[1] if ep else None, r.get("season_dir", ""))
+                          show.get("tt", ""), ep[0] if ep else None, ep[1] if ep else None, r.get("season_dir", ""),
+                          anime=anime)
             jobs.append((iid, m))
         if not jobs:
             messagebox.showwarning("Nothing Selected", "Tick at least one file.", parent=self)
@@ -3310,7 +3393,7 @@ class App(tk.Tk):
         outcomes = self._batch_outcomes.setdefault(iid, {})
         later = []
         if m.kind == "episode" and m.ep is None:
-            self.log(f"[MISS] {m.filename}: can't read SxxEyy from the filename.")
+            self.log(f"[MISS] {m.filename}: can't read the episode number from the filename.")
             for _, code, _ in wanted:
                 outcomes[code] = "✗ bad name"
                 self.progress_step()
@@ -3345,8 +3428,8 @@ class App(tk.Tk):
             try:
                 with p.serial_lock:
                     raw = p.fetch(m, name, code)
-                srt = extract_subtitle(raw, m.ep)
-                write_srt(srt_target(m.path, code), normalize_encoding(srt, code))
+                sub, ext = extract_subtitle_ext(raw, m.ep, m.sub_formats)
+                write_srt(srt_target(m.path, code, ext), normalize_encoding(sub, code))
                 p.failures = 0
                 self.log(f"[OK] {m.filename}: {code.upper()} from {p.name}")
                 return f"✓ {p.short}", set()
