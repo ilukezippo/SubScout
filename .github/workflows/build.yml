@@ -1,0 +1,69 @@
+name: Build SubScout.exe
+
+# Builds a standalone Windows exe (no Python needed) and publishes it as the
+# GitHub release for the APP_VERSION in SubScout.pyw (e.g. v1.0).
+on:
+  push:
+    branches: [main]
+    paths: ["SubScout.pyw", "requirements.txt", "RELEASE_NOTES.md", "packaging/**", "assets/SubScout.ico", ".github/workflows/build.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Version
+        id: v
+        shell: pwsh
+        run: |
+          $v = python packaging/make_version_info.py
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Build exe
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed
+          --name SubScout
+          --icon assets/SubScout.ico
+          --version-file packaging/version_info.txt
+          --collect-data cloudscraper
+          --collect-submodules keyring
+          --hidden-import keyring.backends.Windows
+          SubScout.pyw
+
+      - name: Smoke test (exe starts, all libraries bundled)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\SubScout.exe -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Get-Content "$env:LOCALAPPDATA\SubScout\crash_report.txt" -ErrorAction SilentlyContinue
+            throw "SubScout.exe --selftest failed with exit code $($p.ExitCode)"
+          }
+          "Self-test passed. Size: {0:N1} MB" -f ((Get-Item dist\SubScout.exe).Length / 1MB)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SubScout-v${{ steps.v.outputs.version }}
+          path: dist/SubScout.exe
+
+      - name: Publish release v${{ steps.v.outputs.version }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.version }}
+          name: SubScout v${{ steps.v.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          files: dist/SubScout.exe
+          make_latest: true

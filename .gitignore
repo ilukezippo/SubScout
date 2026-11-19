@@ -12,3 +12,4 @@ settings.json
 .yify_imdb_map.json
 .idea/
 .vscode/
+packaging/version_info.txt

@@ -3046,7 +3046,33 @@ def _enable_windows_dpi_awareness() -> None:
         pass
 
 
+def _selftest() -> int:
+    """Used by the release build: confirms every bundled library loads and a window can open."""
+    try:
+        import bs4  # noqa: F401
+        import certifi  # noqa: F401
+        assert cloudscraper is not None, "cloudscraper missing"
+        if keyring is not None:
+            keyring.get_keyring()
+        root = tk.Tk()
+        root.withdraw()
+        tk.PhotoImage(master=root, data=ICON_64_PNG)
+        ttk.Style(root).theme_use("clam")
+        root.destroy()
+        return 0
+    except Exception:
+        try:
+            with open(CRASH_LOG, "a", encoding="utf-8") as f:
+                f.write(f"\n--- selftest {time.ctime()} ---\n{traceback.format_exc()}")
+        except OSError:
+            pass
+        traceback.print_exc()
+        return 1
+
+
 def main() -> None:
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     _enable_windows_dpi_awareness()
     try:
         App().mainloop()

@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>English &amp; Arabic subtitles for your whole movie and TV-series library: from several subtitle sites, in one click.</b><br>
-  Windows · Python / Tkinter · v1.0
+  Windows 10/11 · single-file .exe · v1.0
 </p>
 
 <p align="center">
@@ -42,23 +42,30 @@ Point SubScout at a movie folder or a TV-series folder. It scans every video, wo
 
 Open **⚙ Sources** to switch sources on or off, change their order, paste your keys and press **Test** / **Test login** to check them.
 
-## Install & run
+## Download
 
-1. Install **Python 3.10+** from [python.org](https://www.python.org/downloads/). Tick *Add Python to PATH*.
-2. Install the requirements:
-   ```bat
-   pip install -r requirements.txt
-   ```
-3. Double-click **`SubScout.pyw`**. The `.pyw` extension means it opens without a console window.
+**[⬇ Download SubScout.exe](https://github.com/ilukezippo/SubScout/releases/latest)**: a single file that runs on any Windows 10/11 PC. No Python and no install needed.
 
-### Build a standalone .exe (optional)
+> The first time you run it, Windows may show *"Windows protected your PC"* because the exe isn't code-signed. Click **More info → Run anyway**.
+
+<details>
+<summary>Run from source / build the exe yourself</summary>
+
+```bat
+pip install -r requirements.txt
+pythonw SubScout.pyw
+```
+
+Build the exe the same way the release does:
 
 ```bat
 pip install pyinstaller
-pyinstaller --onefile --windowed --icon assets\SubScout.ico --name SubScout SubScout.pyw
+python packaging\make_version_info.py
+pyinstaller --onefile --windowed --name SubScout --icon assets\SubScout.ico --version-file packaging\version_info.txt --collect-data cloudscraper --collect-submodules keyring --hidden-import keyring.backends.Windows SubScout.pyw
 ```
 
-The program ends up in `dist\SubScout.exe`.
+Every push to `main` that changes the app is built automatically by GitHub Actions (`.github/workflows/build.yml`). The result is published as the release for the `APP_VERSION` set in `SubScout.pyw`.
+</details>
 
 ## How to use
 
@@ -72,7 +79,7 @@ The program ends up in `dist\SubScout.exe`.
 | What | Where |
 |---|---|
 | Settings, source order, API keys | `%LOCALAPPDATA%\SubScout\settings.json` |
-| OpenSubtitles password | Windows Credential Manager if `keyring` is installed, otherwise `settings.json` |
+| OpenSubtitles password | Windows Credential Manager |
 | IMDb matches (per folder) | `.yify_imdb_map.json` inside each scanned folder, so re-scans are instant |
 | Crash details | `%LOCALAPPDATA%\SubScout\crash_report.txt` |
 
