@@ -10,10 +10,10 @@ First release of **SubScout**: English & Arabic subtitles for your whole movie a
 - **Select all / none / missing,** live filter, sortable columns, per-file `EN ✓ AR ✗` status
 - **Settings window** with three tabs:
   - **Sources:** order and on/off switches, API keys, with *Test* buttons for the keys and the OpenSubtitles login
-  - **Themes:** 6 accent colours × 3 backgrounds, previewed live
+  - **Themes:** dark & white: 6 accent colours × 4 backgrounds (Midnight, OLED Black, Slate, White), previewed live
   - **About:** app info, *Donate*, and *Check for updates*
 - **Auto-update:** checks GitHub at start-up; *Update now* replaces the exe and restarts
-- **Modern dark UI** (Segoe UI Bold), resizable log with *Copy log*, and Windows sounds on finish/error
+- **Modern UI** (Segoe UI Bold), resizable log with *Copy log*, and Windows sounds on finish/error
 
 ### Download & run
 1. Download **SubScout.exe** below. It's a single file and needs no Python or install.

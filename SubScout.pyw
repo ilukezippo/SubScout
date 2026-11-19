@@ -127,24 +127,38 @@ ACCENTS = {  # name: (accent, hover, disabled, pressed, text on accent, disabled
     "Amber":      ("#f59e0b", "#fbbf24", "#5a3d12", "#d97706", "#111111", "#9a7a50"),
     "Graphite":   ("#d4d8e0", "#eceff4", "#3a3f4a", "#b9bfca", "#111111", "#8a909c"),
 }
-BASES = {  # name: (bg, surface, card, card_hi, border, stripe, select)
-    "Midnight":   ("#0f1115", "#161a21", "#1c2029", "#262b36", "#2a303c", "#13161c", "#2b3240"),
-    "OLED Black": ("#000000", "#0a0a0b", "#121214", "#1c1c20", "#26262b", "#060607", "#24242a"),
-    "Slate":      ("#1b2130", "#222939", "#293144", "#333c52", "#3d475f", "#1f2636", "#3a4459"),
+_DARK_TEXT = {"fg": "#e7eaf0", "muted": "#8a93a6", "faint": "#5c6475",
+              "ok": "#4ade80", "bad": "#f87171", "warn": "#fbbf24", "dark": True}
+BASES = {
+    "Midnight":   dict(_DARK_TEXT, bg="#0f1115", surface="#161a21", card="#1c2029", card_hi="#262b36",
+                       border="#2a303c", stripe="#13161c", select="#2b3240", pill="#232833", pill_hi="#323846"),
+    "OLED Black": dict(_DARK_TEXT, bg="#000000", surface="#0a0a0b", card="#121214", card_hi="#1c1c20",
+                       border="#26262b", stripe="#060607", select="#24242a", pill="#1a1a1e", pill_hi="#2a2a30"),
+    "Slate":      dict(_DARK_TEXT, bg="#1b2130", surface="#222939", card="#293144", card_hi="#333c52",
+                       border="#3d475f", stripe="#1f2636", select="#3a4459", pill="#2f374b", pill_hi="#3b4560"),
+    "White":      dict(bg="#eef0f4", surface="#f7f8fa", card="#ffffff", card_hi="#e6e9ef", border="#d3d8e1",
+                       stripe="#eef0f4", select="#dfe3ec", pill="#eceef3", pill_hi="#dde1e9",
+                       fg="#161a22", muted="#5b6474", faint="#9aa1ae",
+                       ok="#15803d", bad="#dc2626", warn="#b45309", dark=False),
 }
 DEFAULT_ACCENT, DEFAULT_BASE = "Violet", "Midnight"
+# on a white background a very light accent would be unreadable, so Graphite turns dark there
+_GRAPHITE_ON_LIGHT = ("#374151", "#4b5563", "#d1d5db", "#1f2937", "#ffffff", "#9ca3af")
 
-C = {
-    "fg": "#e7eaf0", "muted": "#8a93a6", "faint": "#5c6475",
-    "ok": "#4ade80", "bad": "#f87171", "warn": "#fbbf24",
-}
+C: dict = {}
 
 
 def set_theme(accent: str, base: str) -> None:
-    a = ACCENTS.get(accent, ACCENTS[DEFAULT_ACCENT])
     b = BASES.get(base, BASES[DEFAULT_BASE])
+    a = ACCENTS.get(accent, ACCENTS[DEFAULT_ACCENT])
+    if not b["dark"] and accent == "Graphite":
+        a = _GRAPHITE_ON_LIGHT
+    C.update(b)
     C.update(zip(("accent", "accent_hi", "accent_dim", "accent_press", "on_accent", "on_accent_dim"), a))
-    C.update(zip(("bg", "surface", "card", "card_hi", "border", "stripe", "select"), b))
+    if not b["dark"]:  # disabled accent buttons: a soft tint instead of a dark block
+        C["accent_dim"], C["on_accent_dim"] = "#d9d4f5" if accent == "Violet" else "#dfe3ea", "#8a90a0"
+    # accent used as *text* (selected tab, links, highlighted rows): brighter on dark, deeper on white
+    C["accent_text"] = C["accent_hi"] if b["dark"] else C["accent_press"]
 
 
 set_theme(DEFAULT_ACCENT, DEFAULT_BASE)
@@ -1404,6 +1418,7 @@ class App(tk.Tk):
 
         saved = read_json(APP_STATE_FILE, {})
         set_theme(saved.get("theme_accent", DEFAULT_ACCENT), saved.get("theme_base", DEFAULT_BASE))
+        self.configure(bg=C["bg"])
         self._setup_fonts()
         self._setup_styles()
         self._build_ui()
@@ -1468,7 +1483,7 @@ class App(tk.Tk):
             import ctypes
             win.update_idletasks()
             hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
-            val = ctypes.c_int(1)
+            val = ctypes.c_int(1 if C.get("dark", True) else 0)
             for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (Win11 / older Win10)
                 if ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(val),
                                                                ctypes.sizeof(val)) == 0:
@@ -1527,7 +1542,7 @@ class App(tk.Tk):
         st.configure("Surface.TLabel", background=C["surface"], foreground=C["muted"], font=F(9))
         st.configure("Section.TLabel", background=C["card"], foreground=C["muted"], font=F(8))
         st.configure("CardTitle.TLabel", background=C["card"], foreground=C["fg"], font=F(16))
-        st.configure("Link.TLabel", background=C["card"], foreground=C["accent_hi"], font=F(10))
+        st.configure("Link.TLabel", background=C["card"], foreground=C["accent_text"], font=F(10))
         st.map("Link.TLabel", foreground=[("active", C["fg"])])
         st.configure("TestBusy.TLabel", background=C["card"], foreground=C["muted"], font=F(9))
         st.configure("TestOk.TLabel", background=C["card"], foreground=C["ok"], font=F(9))
@@ -1536,10 +1551,10 @@ class App(tk.Tk):
         btn = dict(borderwidth=0, padding=[14, 7], font=F(10), relief="flat",
                    bordercolor=C["card_hi"], lightcolor=C["card_hi"], darkcolor=C["card_hi"])
         st.configure("TButton", background=C["card_hi"], foreground=C["fg"], **btn)
-        st.map("TButton", background=[("disabled", C["card"]), ("pressed", C["border"]), ("active", "#323846")],
+        st.map("TButton", background=[("disabled", C["card"]), ("pressed", C["border"]), ("active", C["pill_hi"])],
                foreground=[("disabled", C["faint"])],
-               bordercolor=[("active", "#323846")], lightcolor=[("active", "#323846")],
-               darkcolor=[("active", "#323846")])
+               bordercolor=[("active", C["pill_hi"])], lightcolor=[("active", C["pill_hi"])],
+               darkcolor=[("active", C["pill_hi"])])
         acc = dict(btn, bordercolor=C["accent"], lightcolor=C["accent"], darkcolor=C["accent"])
         st.configure("Accent.TButton", background=C["accent"], foreground=C["on_accent"], **{**acc, "font": F(10)})
         st.map("Accent.TButton", background=[("disabled", C["accent_dim"]), ("pressed", C["accent_press"]),
@@ -1554,9 +1569,9 @@ class App(tk.Tk):
                bordercolor=[("active", "#ffe94d")], lightcolor=[("active", "#ffe94d")],
                darkcolor=[("active", "#ffe94d")])
         st.configure("Big.Accent.TButton", padding=[22, 10], font=F(11))
-        st.configure("Pill.TButton", padding=[12, 5], font=F(9), background="#232833",
-                     bordercolor="#232833", lightcolor="#232833", darkcolor="#232833")
-        st.map("Pill.TButton", background=[("active", "#323846"), ("disabled", C["surface"])],
+        st.configure("Pill.TButton", padding=[12, 5], font=F(9), background=C["pill"],
+                     bordercolor=C["pill"], lightcolor=C["pill"], darkcolor=C["pill"])
+        st.map("Pill.TButton", background=[("active", C["pill_hi"]), ("disabled", C["surface"])],
                foreground=[("disabled", C["faint"])])
         st.configure("Ghost.TButton", background=C["bg"], foreground=C["muted"], padding=[10, 4], font=F(9),
                      bordercolor=C["bg"], lightcolor=C["bg"], darkcolor=C["bg"])
@@ -1603,13 +1618,13 @@ class App(tk.Tk):
                      borderwidth=0, **flat)
         st.map("TNotebook.Tab",
                background=[("selected", C["card"]), ("active", C["surface"])],
-               foreground=[("disabled", C["faint"]), ("selected", C["accent_hi"]), ("active", C["fg"])],
+               foreground=[("disabled", C["faint"]), ("selected", C["accent_text"]), ("active", C["fg"])],
                bordercolor=[("selected", C["card"])], lightcolor=[("selected", C["card"])],
                expand=[("selected", [0, 0, 0, 0])])
 
         st.configure("Treeview", background=C["surface"], fieldbackground=C["surface"], foreground=C["fg"],
                      rowheight=row_h, borderwidth=0, font=F(10), **flat)
-        st.map("Treeview", background=[("selected", C["select"])], foreground=[("selected", C["accent_hi"])])
+        st.map("Treeview", background=[("selected", C["select"])], foreground=[("selected", C["accent_text"])])
         st.configure("Treeview.Heading", background=C["card"], foreground=C["muted"], font=F(9),
                      borderwidth=0, padding=[8, 7], relief="flat",
                      bordercolor=C["card"], lightcolor=C["card"], darkcolor=C["card"])
@@ -1734,8 +1749,7 @@ class App(tk.Tk):
         sb = ttk.Scrollbar(self.log_frame, orient="vertical", command=self.log_text.yview)
         sb.pack(fill="y", side="right")
         self.log_text.configure(yscrollcommand=sb.set)
-        for tag, color in (("ok", C["ok"]), ("err", C["bad"]), ("warn", C["warn"]), ("dim", C["faint"])):
-            self.log_text.tag_configure(tag, foreground=color)
+        self._tag_log()
 
         menu_opts = dict(tearoff=0, bg=C["card"], fg=C["fg"], activebackground=C["card_hi"],
                          activeforeground=C["accent"], bd=0, font=F(10), relief="flat")
@@ -1812,16 +1826,21 @@ class App(tk.Tk):
         tree.tag_configure("done", foreground=C["ok"])
         tree.tag_configure("partial", foreground=C["warn"])
         tree.tag_configure("fail", foreground=C["bad"])
-        tree.tag_configure("show", foreground=C["accent_hi"], font=F(10))
+        tree.tag_configure("show", foreground=C["accent_text"], font=F(10))
         tree.tag_configure("season", foreground=C["muted"])
         tree.tag_configure("stripe", background=C["stripe"])
+
+    def _tag_log(self) -> None:
+        for tag, color in (("ok", C["ok"]), ("err", C["bad"]), ("warn", C["warn"]), ("dim", C["faint"])):
+            self.log_text.tag_configure(tag, foreground=color)
 
     def _apply_theme(self, accent: str, base: str) -> None:
         """Switch colours live: ttk styles + the few plain-Tk widgets that hold their own colours."""
         set_theme(accent, base)
         self._setup_styles()
         self.configure(bg=C["bg"])
-        self.log_text.configure(bg=C["surface"], fg=C["muted"])
+        self.log_text.configure(bg=C["surface"], fg=C["muted"], insertbackground=C["fg"])
+        self._tag_log()
         self.spinner.configure(bg=C["bg"])
         busy = self._spin_job is not None
         self.spinner.itemconfigure(self._spin_track, outline=C["card_hi"] if busy else C["bg"])
@@ -1829,9 +1848,11 @@ class App(tk.Tk):
         self.context_menu.configure(bg=C["card"], activebackground=C["card_hi"], activeforeground=C["accent"])
         for t in self.tabs.values():
             self._tag_tree(t.tree)
+        self._dark_title_bar(self)
         for w in (getattr(self, "_settings_win", None), getattr(self, "_update_win", None)):
             if w is not None and w.winfo_exists():
                 w.configure(bg=C["bg"])
+                self._dark_title_bar(w)
 
     # ---------- updates ----------
     def _check_updates(self, manual: bool, button: ttk.Button | None = None, status: ttk.Label | None = None) -> None:
@@ -2482,7 +2503,7 @@ class App(tk.Tk):
         ttk.Label(parent, text="ACCENT COLOUR", style="Section.TLabel").pack(anchor="w")
         acc_row = ttk.Frame(parent, style="Card.TFrame")
         acc_row.pack(anchor="w", pady=[6, 16])
-        ttk.Label(parent, text="BACKGROUND", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(parent, text="BACKGROUND  ·  DARK OR WHITE", style="Section.TLabel").pack(anchor="w")
         base_row = ttk.Frame(parent, style="Card.TFrame")
         base_row.pack(anchor="w", pady=[6, 16])
         ttk.Label(parent, text="Changes preview instantly — press Save to keep them.",
@@ -2497,19 +2518,19 @@ class App(tk.Tk):
                 w = int(cv["width"])
                 selected = theme[kind] == name
                 if kind == "accent":
-                    col = ACCENTS[name][0]
+                    col = _GRAPHITE_ON_LIGHT[0] if name == "Graphite" and not C["dark"] else ACCENTS[name][0]
                     r = int(15 * s)
                     cx, cy = w // 2, int(22 * s)
                     if selected:
                         cv.create_oval(cx - r - 5, cy - r - 5, cx + r + 5, cy + r + 5, outline=C["fg"], width=2)
                     cv.create_oval(cx - r, cy - r, cx + r, cy + r, fill=col, outline=col)
                     if selected:
-                        cv.create_text(cx, cy, text="✓", fill=ACCENTS[name][4], font=F(11))
+                        cv.create_text(cx, cy, text="✓", fill=C["on_accent"], font=F(11))
                     cv.create_text(cx, int(54 * s), text=name, fill=C["fg"] if selected else C["muted"], font=F(9))
                 else:
-                    bg, surface, card = BASES[name][0], BASES[name][1], BASES[name][2]
+                    bg, surface, card = BASES[name]["bg"], BASES[name]["surface"], BASES[name]["card"]
                     x0, y0, x1, y1 = int(4 * s), int(4 * s), w - int(4 * s), int(50 * s)
-                    cv.create_rectangle(x0, y0, x1, y1, fill=bg, outline=C["fg"] if selected else C["border"],
+                    cv.create_rectangle(x0, y0, x1, y1, fill=bg, outline=C["accent"] if selected else C["border"],
                                         width=2 if selected else 1)
                     p = int(7 * s)
                     cv.create_rectangle(x0 + p, y0 + p, x1 - p, y0 + 2 * p, fill=card, outline=card)
