@@ -1,23 +1,39 @@
 <p align="center">
-  <img src="assets/SubScout.png" width="128" alt="SubScout icon">
+  <img src="assets/SubScout.png" width="96" alt="SubScout icon">
 </p>
 
 <h1 align="center">SubScout</h1>
 
 <p align="center">
-  <b>English &amp; Arabic subtitles for your whole movie and TV-series library: from several subtitle sites, in one click.</b><br>
-  Windows 10/11 · single-file .exe · v1.0
+  <b>English &amp; Arabic subtitles for your whole movie and TV-series library.</b><br>
+  Scans your folders and downloads only the missing subtitles, from several subtitle sites, in one click.
 </p>
 
 <p align="center">
-  <img src="assets/screenshot.png" alt="SubScout main window" width="900">
+  <a href="../../releases/latest"><img src="https://img.shields.io/github/downloads/ilukezippo/SubScout/total?label=downloads&color=7c5cff" alt="Downloads"></a>
+  <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/ilukezippo/SubScout?color=2b2c30" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-2b2c30" alt="Windows 10 and 11">
+  <a href="../../stargazers"><img src="https://img.shields.io/github/stars/ilukezippo/SubScout?style=flat&color=7c5cff" alt="GitHub stars"></a>
 </p>
+
 <p align="center">
-  <img src="assets/screenshot-white.png" alt="SubScout White theme" width="900">
+  <a href="https://github.com/ilukezippo/SubScout/releases/latest/download/SubScout.exe"><img src="assets/download-button.svg" width="340" alt="Download SubScout for Windows"></a>
 </p>
+
 <p align="center">
-  <img src="assets/settings-about.png" alt="Settings: About" width="440">
-  <img src="assets/settings-themes.png" alt="Settings: Themes" width="440">
+  <img src="assets/screenshot.png" width="900" alt="SubScout main window">
+</p>
+
+<p align="center">
+  <sub>Downloads the latest <b>SubScout.exe</b> straight away: one file, no Python, no install.</sub>
+</p>
+
+<p align="center">
+  <a href="../../releases/latest">All downloads</a> ·
+  <a href="#what-it-does">Features</a> ·
+  <a href="#subtitle-sources">Sources</a> ·
+  <a href="#how-to-use">How to use</a> ·
+  <a href="#download">Build from source</a>
 </p>
 
 ---
@@ -52,7 +68,7 @@ Open **⚙ Settings → Sources** to switch sources on or off, change their orde
 
 ## Download
 
-**[⬇ Download SubScout.exe](https://github.com/ilukezippo/SubScout/releases/latest)**: a single file that runs on any Windows 10/11 PC. No Python and no install needed.
+Use the **Download for Windows** button at the top, or grab `SubScout.exe` from [all releases](../../releases/latest). It's a single file that runs on any Windows 10/11 PC, with no Python and no install needed.
 
 > The first time you run it, Windows may show *"Windows protected your PC"* because the exe isn't code-signed. Click **More info → Run anyway**.
 
