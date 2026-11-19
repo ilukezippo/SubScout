@@ -55,6 +55,35 @@ jobs:
           }
           "Self-test passed. Size: {0:N1} MB" -f ((Get-Item dist\SubScout.exe).Length / 1MB)
 
+      - name: Update test (swap the exe and restart it, like "Update now")
+        shell: pwsh
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP "updtest"
+          New-Item -ItemType Directory $d -Force | Out-Null
+          Copy-Item dist\SubScout.exe "$d\SubScout.exe"
+          $marker = Join-Path $d "restarted.txt"
+          $src = (Resolve-Path dist\SubScout.exe).Path
+          Start-Process -FilePath "$d\SubScout.exe" -ArgumentList @("--update-test", "`"$src`"", "--marker", "`"$marker`"") -Wait
+          for ($i = 0; $i -lt 90 -and -not (Test-Path $marker); $i++) { Start-Sleep -Seconds 1 }
+          if (-not (Test-Path $marker)) {
+            Get-Process | Where-Object { $_.ProcessName -like "SubScout*" } | Format-Table Id, ProcessName, MainWindowTitle | Out-Host
+            throw "The exe did not come back after the self-update restart"
+          }
+          Get-Content $marker
+
+      - name: Single-instance test (a second SubScout is refused while one is open)
+        shell: pwsh
+        run: |
+          $app = Start-Process -FilePath dist\SubScout.exe -PassThru
+          Start-Sleep -Seconds 8
+          $p = Start-Process -FilePath dist\SubScout.exe -ArgumentList "--instance-check" -Wait -PassThru
+          if ($p.ExitCode -ne 3) { throw "Second instance was not detected (exit $($p.ExitCode))" }
+          Get-Process | Where-Object { $_.ProcessName -eq "SubScout" } | Stop-Process -Force
+          Start-Sleep -Seconds 3
+          $p = Start-Process -FilePath dist\SubScout.exe -ArgumentList "--instance-check" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Lock not released after closing (exit $($p.ExitCode))" }
+          "Single-instance check passed"
+
       - uses: actions/upload-artifact@v4
         with:
           name: SubScout-v${{ steps.v.outputs.version }}

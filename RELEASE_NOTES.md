@@ -3,6 +3,8 @@
   - Understands fansub file names: `[SubsPlease] Frieren - 12 (1080p) [ABCD1234].mkv`, `Show_012v2`, `Ep 12`, `#12`, and absolute numbers like `One Piece - 1100`
   - Cleans folder names such as `[Judas] Frieren (Season 2) [1080p]`, and takes the season from the folder (`Season 2`, `S2`, `2nd Season`)
   - Keeps styled **.ass** fansubs (saved as `.ar.ass` / `.en.ass`) and picks the right episode out of season packs
+- **Fixed:** *Update now* could show "Failed to load Python DLL" when SubScout restarted itself. The restarted app now starts with a clean environment (tested on Windows with a real swap and restart)
+- **Only one SubScout at a time:** opening it again shows "SubScout is already running" and brings the open window to the front
 - **All tabs:** existing `.ass` / `.ssa` subtitles now count as "already has subtitles", and `.ass` files are used when a site has no `.srt`
 
 If you're on v1.0, SubScout will offer this update when it starts. Click **Update now**.

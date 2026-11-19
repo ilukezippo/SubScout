@@ -1322,6 +1322,27 @@ def is_frozen_exe() -> bool:
     return bool(getattr(sys, "frozen", False)) and sys.executable.lower().endswith(".exe")
 
 
+def launch_swap_and_restart(new: str, exe: str, restart_args: str = "") -> str:
+    """After we exit: replace `exe` with `new`, then start it again. Returns the helper script path.
+    The restarted exe must NOT inherit this process's PyInstaller state (_PYI_* variables), or it looks for
+    python3xx.dll in our own temp folder (_MEIxxxx), which is deleted when we exit."""
+    script = os.path.join(tempfile.gettempdir(), "SubScout_update.cmd")
+    with open(script, "w", encoding="utf-8") as f:
+        f.write("@echo off\r\nchcp 65001 >nul\r\n"
+                'for /f "delims==" %%v in (\'set _PYI 2^>nul\') do set "%%v="\r\n'
+                'set "_MEIPASS2="\r\nset "PYINSTALLER_RESET_ENVIRONMENT=1"\r\n'
+                "set tries=0\r\n:wait\r\n"
+                "timeout /t 1 /nobreak >nul\r\n"
+                f'move /y "{new}" "{exe}" >nul 2>&1\r\n'
+                "if errorlevel 1 (\r\n  set /a tries+=1\r\n  if %tries% lss 30 goto wait\r\n)\r\n"
+                f'start "" "{exe}" {restart_args}\r\ndel "%~f0"\r\n')
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("_PYI_", "_MEIPASS"))}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    subprocess.Popen(["cmd.exe", "/c", script], creationflags=0x08000000,  # no console window
+                     close_fds=True, env=env, cwd=os.path.dirname(exe) or None)
+    return script
+
+
 # ---------- "Test" buttons in the Sources window ----------
 def test_subdl_key(key: str) -> tuple[bool, str]:
     if not key:
@@ -2037,14 +2058,7 @@ class App(tk.Tk):
                 with open(new, "rb") as f:
                     if f.read(2) != b"MZ" or os.path.getsize(new) < 1_000_000:
                         raise ValueError("downloaded file is not a valid program")
-                script = os.path.join(tempfile.gettempdir(), "SubScout_update.cmd")
-                with open(script, "w", encoding="utf-8") as f:
-                    f.write("@echo off\r\nchcp 65001 >nul\r\nset tries=0\r\n:wait\r\n"
-                            "timeout /t 1 /nobreak >nul\r\n"
-                            f'move /y "{new}" "{exe}" >nul 2>&1\r\n'
-                            "if errorlevel 1 (\r\n  set /a tries+=1\r\n  if %tries% lss 30 goto wait\r\n)\r\n"
-                            f'start "" "{exe}"\r\ndel "%~f0"\r\n')
-                subprocess.Popen(["cmd.exe", "/c", script], creationflags=0x08000000, close_fds=True)  # no window
+                launch_swap_and_restart(new, exe)
                 self.ui(self._restart_for_update)
             except Exception as e:
                 text = short_error(e) if isinstance(e, requests.RequestException) else str(e)
@@ -3540,9 +3554,72 @@ def _selftest() -> int:
         return 1
 
 
+_INSTANCE_MUTEX = None  # kept alive for the whole run; Windows frees it when the process ends
+
+
+def already_running() -> bool:
+    """Windows: True if another SubScout is open (named mutex owned by that process)."""
+    global _INSTANCE_MUTEX
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        _INSTANCE_MUTEX = kernel32.CreateMutexW(None, False, "Local\\SubScout.SingleInstance")
+        return ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
+    except Exception:
+        return False
+
+
+def show_already_running() -> None:
+    """Tell the user, then bring the open SubScout window to the front."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.MessageBoxW(None, "SubScout is already running.\n\nThe open window will be brought to the front.",
+                           APP_NAME, 0x40 | 0x40000)  # MB_ICONINFORMATION | MB_TOPMOST
+        hwnd = user32.FindWindowW(None, APP_NAME)
+        if hwnd:
+            if user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
+def _arg_after(flag: str) -> str:
+    try:
+        return sys.argv[sys.argv.index(flag) + 1]
+    except (ValueError, IndexError):
+        return ""
+
+
+def _update_test() -> int:
+    """Release-build check: performs a real self-update (swap + restart) from a local exe. The restarted
+    copy runs --selftest and writes the marker file, proving the restart works."""
+    src, marker = _arg_after("--update-test"), _arg_after("--marker")
+    new = os.path.join(tempfile.gettempdir(), "SubScout_update.exe")
+    shutil.copyfile(src, new)
+    launch_swap_and_restart(new, sys.executable, f'--selftest --marker "{marker}"')
+    return 0
+
+
 def main() -> None:
+    if "--update-test" in sys.argv:
+        sys.exit(_update_test())
     if "--selftest" in sys.argv:
-        sys.exit(_selftest())
+        code = _selftest()
+        marker = _arg_after("--marker")
+        if marker and code == 0:
+            with open(marker, "w", encoding="utf-8") as f:
+                f.write(f"restarted OK v{APP_VERSION}")
+        sys.exit(code)
+    if "--instance-check" in sys.argv:  # release-build check: 3 = another SubScout is open
+        sys.exit(3 if already_running() else 0)
+    if already_running():
+        show_already_running()
+        sys.exit(0)
     _enable_windows_dpi_awareness()
     try:
         App().mainloop()
