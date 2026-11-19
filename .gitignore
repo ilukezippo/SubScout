@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.spec
+.venv/
+venv/
+*.tmp
+*.part
+crash_report.txt
+settings.json
+.yify_imdb_map.json
+.idea/
+.vscode/
